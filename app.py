@@ -1,85 +1,161 @@
 import streamlit as st
+import pandas as pd
+import random
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
 
-st.set_page_config(page_title="AI Tutor ม.6", layout="centered")
+st.set_page_config(page_title="AI Learning System M.6", layout="centered")
+st.title("🎓 AI ระบบแนะนำบทเรียน ม.6")
 
-st.title("🤖 AI แนะนำบทเรียนสำหรับ ม.6")
+# =========================
+# โหลดข้อมูลจริง + Train ML
+# =========================
+@st.cache_resource
+def train_model():
+    df = pd.read_csv("StudentsPerformance.csv")
 
-# ----------------------------
-# เก็บสถานะ
-# ----------------------------
-if "score" not in st.session_state:
-    st.session_state.score = 0
+    df["total_score"] = (
+        df["math score"] +
+        df["reading score"] +
+        df["writing score"]
+    )
 
-if "question_number" not in st.session_state:
-    st.session_state.question_number = 0
+    df["level"] = pd.cut(
+        df["total_score"],
+        bins=[0,150,220,300],
+        labels=["ต่ำ","กลาง","สูง"]
+    )
 
-if "difficulty" not in st.session_state:
-    st.session_state.difficulty = 1
+    X = df[["math score","reading score","writing score"]]
+    y = df["level"]
 
-# ----------------------------
-# คลังคำถาม
-# ----------------------------
-questions = {
-    1: [
-        {"q": "2x + 3 = 7 ค่า x เท่ากับอะไร?", "a": "2"},
-        {"q": "5 + 7 = ?", "a": "12"},
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42
+    )
+
+    model = RandomForestClassifier()
+    model.fit(X_train, y_train)
+
+    accuracy = model.score(X_test, y_test)
+
+    return model, accuracy
+
+model, accuracy = train_model()
+st.write(f"📊 ความแม่นยำโมเดล: {accuracy:.2f}")
+
+# =========================
+# Question Bank
+# =========================
+question_bank = {
+    "Math": [
+        {"q": "2+2=?", "c": ["3","4","5","6"], "a": "4", "level":1},
+        {"q": "5x=20, x=?", "c": ["2","3","4","5"], "a": "4", "level":2},
+        {"q": "อนุพันธ์ x^2 ?", "c": ["2x","x","x^2","1"], "a": "2x", "level":3},
     ],
-    2: [
-        {"q": "แก้สมการ 3x - 5 = 10", "a": "5"},
-        {"q": "พื้นที่วงกลมสูตรคืออะไร?", "a": "pi r^2"},
+    "Reading": [
+        {"q": "Main idea คืออะไร?", "c":["ใจความหลัก","คำศัพท์","ไวยากรณ์","ผู้เขียน"], "a":"ใจความหลัก", "level":1},
+        {"q": "Inference คือ?", "c":["สรุป","อนุมาน","แปลตรงตัว","สะกดคำ"], "a":"อนุมาน", "level":2},
+        {"q": "Tone ของเรื่องหมายถึง?", "c":["เสียง","อารมณ์","ตัวละคร","สถานที่"], "a":"อารมณ์", "level":3},
     ],
-    3: [
-        {"q": "ลิมิตของ x→0 (sinx/x) เท่ากับอะไร?", "a": "1"},
-        {"q": "อนุพันธ์ของ x^2 คืออะไร?", "a": "2x"},
-    ],
+    "Writing": [
+        {"q": "Essay มีกี่ย่อหน้า?", "c":["1","2","3","5"], "a":"3", "level":1},
+        {"q": "Topic sentence คือ?", "c":["ประโยคหลัก","ประโยครอง","คำเชื่อม","บทสรุป"], "a":"ประโยคหลัก", "level":2},
+        {"q": "Thesis statement คือ?", "c":["สรุป","แนวคิดหลัก","คำศัพท์","หัวข้อ"], "a":"แนวคิดหลัก", "level":3},
+    ]
 }
 
-# ----------------------------
-# ฟังก์ชันถามคำถาม
-# ----------------------------
-def ask_question():
-    level = st.session_state.difficulty
-    q_list = questions[level]
-    index = st.session_state.question_number % len(q_list)
-    return q_list[index]
-
-# ----------------------------
-# เริ่มระบบ
-# ----------------------------
-if st.button("เริ่มทำแบบทดสอบ"):
+# =========================
+# Session State
+# =========================
+if "subject" not in st.session_state:
+    st.session_state.subject = "Math"
+    st.session_state.level = 2
     st.session_state.score = 0
-    st.session_state.question_number = 0
-    st.session_state.difficulty = 1
+    st.session_state.count = 0
+    st.session_state.correct_streak = 0
+    st.session_state.finished = False
 
-if st.session_state.question_number < 5:
+subject = st.selectbox("เลือกวิชา", ["Math","Reading","Writing"])
 
-    question = ask_question()
-    st.write(f"📘 คำถามระดับ {st.session_state.difficulty}")
-    st.write(question["q"])
+# รีเซ็ตเมื่อเปลี่ยนวิชา
+if subject != st.session_state.subject:
+    st.session_state.subject = subject
+    st.session_state.level = 2
+    st.session_state.score = 0
+    st.session_state.count = 0
+    st.session_state.correct_streak = 0
+    st.session_state.finished = False
 
-    user_answer = st.text_input("พิมพ์คำตอบของคุณ:")
+# =========================
+# ระบบ Adaptive Test
+# =========================
+if not st.session_state.finished:
 
-    if st.button("ส่งคำตอบ"):
-        if user_answer.lower() == question["a"].lower():
-            st.success("✅ ถูกต้อง!")
-            st.session_state.score += 1
-            st.session_state.difficulty = min(3, st.session_state.difficulty + 1)
-        else:
-            st.error("❌ ยังไม่ถูก")
-            st.session_state.difficulty = max(1, st.session_state.difficulty - 1)
+    questions = [
+        q for q in question_bank[subject]
+        if q["level"] == st.session_state.level
+    ]
 
-        st.session_state.question_number += 1
-        st.rerun()
+    if questions:
+        q = random.choice(questions)
 
+        st.subheader(f"ข้อที่ {st.session_state.count+1}")
+        st.write(q["q"])
+
+        choice = st.radio("เลือกคำตอบ", q["c"])
+
+        if st.button("ส่งคำตอบ"):
+            if choice == q["a"]:
+                st.success("ถูกต้อง!")
+                st.session_state.score += 15
+                st.session_state.correct_streak += 1
+
+                if st.session_state.correct_streak >= 2:
+                    st.session_state.level = min(3, st.session_state.level+1)
+                    st.session_state.score += 5
+                    st.session_state.correct_streak = 0
+            else:
+                st.error("ผิด!")
+                st.session_state.level = max(1, st.session_state.level-1)
+                st.session_state.correct_streak = 0
+
+            st.session_state.count += 1
+
+            if st.session_state.count >= 5:
+                st.session_state.finished = True
+
+            st.rerun()
+
+# =========================
+# หลังทำเสร็จ
+# =========================
 else:
-    st.write("🎯 ผลลัพธ์ของคุณ")
-    final_score = st.session_state.score
-    percentage = (final_score / 5) * 100
-    st.write(f"คะแนนรวม: {percentage}%")
+    st.subheader("✅ ทำข้อสอบเสร็จแล้ว")
+    st.write("คะแนนที่ได้:", st.session_state.score)
 
-    if percentage < 50:
-        st.warning("คุณควรทบทวนพื้นฐานคณิตศาสตร์เพิ่มเติม")
-    elif percentage < 80:
-        st.info("คุณอยู่ระดับปานกลาง ควรฝึกทำโจทย์เพิ่ม")
+    # สมมุติแปลงคะแนนเป็นช่วง 0-100
+    predicted = model.predict([[st.session_state.score,
+                                st.session_state.score,
+                                st.session_state.score]])[0]
+
+    st.success(f"🎯 ระดับความเข้าใจ: {predicted}")
+
+    # =========================
+    # AI Chatbot แนะนำบทเรียน
+    # =========================
+    st.subheader("🤖 AI แนะนำบทเรียน")
+
+    if predicted == "ต่ำ":
+        st.info("ควรทบทวนพื้นฐาน และทำแบบฝึกหัดระดับง่าย")
+    elif predicted == "กลาง":
+        st.info("ควรฝึกโจทย์ประยุกต์ และจับเวลา")
     else:
-        st.success("ยอดเยี่ยม! คุณพร้อมสำหรับโจทย์ระดับสูง")
+        st.info("พร้อมทำข้อสอบเข้ามหาวิทยาลัย และโจทย์ยาก")
+
+    if st.button("เริ่มใหม่"):
+        st.session_state.level = 2
+        st.session_state.score = 0
+        st.session_state.count = 0
+        st.session_state.correct_streak = 0
+        st.session_state.finished = False
+        st.rerun()
