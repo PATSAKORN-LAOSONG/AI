@@ -1,176 +1,155 @@
 import streamlit as st
-import pandas as pd
 import random
+import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
 
-st.set_page_config(page_title="AI Learning System M.6", layout="centered")
-st.title("🎓 AI ระบบแนะนำบทเรียน ม.6")
+st.set_page_config(page_title="AI Learning Chatbot", layout="centered")
 
-# =========================
-# โหลดข้อมูลจริง + Train ML
-# =========================
-@st.cache_resource
-def train_model():
-    df = pd.read_csv("StudentsPerformance.csv")
+st.title("🤖 AI ระบบแนะนำบทเรียน")
 
-    df["total_score"] = (
-        df["math score"] +
-        df["reading score"] +
-        df["writing score"]
-    )
+# ==============================
+# SESSION STATE
+# ==============================
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-    df["level"] = pd.cut(
-        df["total_score"],
-        bins=[0,150,220,300],
-        labels=["ต่ำ","กลาง","สูง"]
-    )
+if "score" not in st.session_state:
+    st.session_state.score = 0
 
-    X = df[["math score","reading score","writing score"]]
-    y = df["level"]
+if "question_index" not in st.session_state:
+    st.session_state.question_index = 0
 
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42
-    )
+if "questions" not in st.session_state:
+    st.session_state.questions = []
 
-    model = RandomForestClassifier()
-    model.fit(X_train, y_train)
+if "answers" not in st.session_state:
+    st.session_state.answers = {}
 
-    accuracy = model.score(X_test, y_test)
+if "finished" not in st.session_state:
+    st.session_state.finished = False
 
-    return model, accuracy
 
-model, accuracy = train_model()
-st.write(f"📊 ความแม่นยำโมเดล: {accuracy:.2f}")
-
-# =========================
-# Question Bank (5 ข้อต่อวิชา)
-# =========================
+# ==============================
+# QUESTION BANK
+# ==============================
 question_bank = {
-    "Math": [
-        {"q":"2+2=?","c":["3","4","5","6"],"a":"4","level":1},
-        {"q":"10 ÷ 2 = ?","c":["2","3","4","5"],"a":"5","level":1},
-        {"q":"5x=20, x=?","c":["2","3","4","5"],"a":"4","level":2},
-        {"q":"พื้นที่สามเหลี่ยมฐาน4สูง5?","c":["10","15","20","25"],"a":"10","level":2},
-        {"q":"อนุพันธ์ x^2 ?","c":["2x","x","x^2","1"],"a":"2x","level":3},
+    "easy": [
+        {"q": "2 + 3 =", "choices": ["4", "5", "6", "7"], "answer": "5"},
+        {"q": "5 - 2 =", "choices": ["1", "2", "3", "4"], "answer": "3"},
+        {"q": "3 x 2 =", "choices": ["5", "6", "7", "8"], "answer": "6"},
+        {"q": "10 ÷ 2 =", "choices": ["3", "4", "5", "6"], "answer": "5"},
+        {"q": "4 + 4 =", "choices": ["6", "7", "8", "9"], "answer": "8"},
+        {"q": "6 - 1 =", "choices": ["4", "5", "6", "7"], "answer": "5"},
+        {"q": "1 + 9 =", "choices": ["9", "10", "11", "12"], "answer": "10"}
     ],
-    "Reading": [
-        {"q":"Main idea คืออะไร?","c":["ใจความหลัก","คำศัพท์","ไวยากรณ์","ผู้เขียน"],"a":"ใจความหลัก","level":1},
-        {"q":"Synonym หมายถึง?","c":["คำตรงข้าม","คำเหมือน","คำกริยา","คำนาม"],"a":"คำเหมือน","level":1},
-        {"q":"Inference คือ?","c":["สรุป","อนุมาน","แปลตรงตัว","สะกดคำ"],"a":"อนุมาน","level":2},
-        {"q":"Context clue ใช้ทำอะไร?","c":["เดาความหมาย","สรุปเรื่อง","วิเคราะห์","จับเวลา"],"a":"เดาความหมาย","level":2},
-        {"q":"Tone ของเรื่องหมายถึง?","c":["เสียง","อารมณ์","ตัวละคร","สถานที่"],"a":"อารมณ์","level":3},
+    "medium": [
+        {"q": "อนุพันธ์ของ x^2 คืออะไร?", "choices": ["x", "2x", "x^2", "2"], "answer": "2x"},
+        {"q": "อนุพันธ์ของ 3x คืออะไร?", "choices": ["3", "x", "6x", "1"], "answer": "3"},
+        {"q": "lim x→0 ของ x^2 =", "choices": ["0", "1", "2", "ไม่มีค่า"], "answer": "0"},
+        {"q": "อินทิกรัลของ 2x =", "choices": ["x^2", "2", "x", "x^2+1"], "answer": "x^2"},
+        {"q": "√16 =", "choices": ["2", "3", "4", "5"], "answer": "4"},
+        {"q": "5^2 =", "choices": ["10", "20", "25", "15"], "answer": "25"}
     ],
-    "Writing": [
-        {"q":"Essay มีกี่ย่อหน้า?","c":["1","2","3","5"],"a":"3","level":1},
-        {"q":"Paragraph ต้องมีอะไรหลัก?","c":["Topic sentence","Grammar","Verb","Adverb"],"a":"Topic sentence","level":1},
-        {"q":"Topic sentence คือ?","c":["ประโยคหลัก","ประโยครอง","คำเชื่อม","บทสรุป"],"a":"ประโยคหลัก","level":2},
-        {"q":"Conclusion ทำหน้าที่?","c":["เปิดเรื่อง","สรุป","ยกตัวอย่าง","ตั้งคำถาม"],"a":"สรุป","level":2},
-        {"q":"Thesis statement คือ?","c":["สรุป","แนวคิดหลัก","คำศัพท์","หัวข้อ"],"a":"แนวคิดหลัก","level":3},
+    "hard": [
+        {"q": "อนุพันธ์ของ x^3 =", "choices": ["2x", "3x^2", "x^2", "3x"], "answer": "3x^2"},
+        {"q": "lim x→∞ ของ 1/x =", "choices": ["0", "1", "∞", "-∞"], "answer": "0"},
+        {"q": "อินทิกรัลของ x^2 =", "choices": ["x^3/3", "2x", "x^2", "3x"], "answer": "x^3/3"},
+        {"q": "sin(90°) =", "choices": ["0", "1", "-1", "0.5"], "answer": "1"},
+        {"q": "cos(0°) =", "choices": ["0", "1", "-1", "0.5"], "answer": "1"},
+        {"q": "log10(100) =", "choices": ["1", "2", "10", "100"], "answer": "2"}
     ]
 }
 
-# =========================
-# Session State
-# =========================
-if "initialized" not in st.session_state:
-    st.session_state.subject = "Math"
-    st.session_state.level = 2
+
+# ==============================
+# RANDOM 5 QUESTIONS EACH LEVEL
+# ==============================
+def generate_questions():
+    questions = []
+    for level in question_bank:
+        questions.extend(random.sample(question_bank[level], 5))
+    random.shuffle(questions)
+    return questions
+
+
+# ==============================
+# ML MODEL (Classification)
+# ==============================
+def train_model():
+    data = {
+        "score": [0, 2, 4, 6, 8, 10, 12, 14, 15],
+        "level": ["easy", "easy", "easy",
+                  "medium", "medium", "medium",
+                  "hard", "hard", "hard"]
+    }
+    df = pd.DataFrame(data)
+
+    X = df[["score"]]
+    y = df["level"]
+
+    model = RandomForestClassifier()
+    model.fit(X, y)
+    return model
+
+model = train_model()
+
+
+# ==============================
+# START BUTTON
+# ==============================
+if st.button("🚀 เริ่มทำแบบทดสอบใหม่"):
+    st.session_state.questions = generate_questions()
     st.session_state.score = 0
-    st.session_state.count = 0
-    st.session_state.correct_streak = 0
+    st.session_state.question_index = 0
+    st.session_state.answers = {}
     st.session_state.finished = False
-    st.session_state.used_questions = []
-    st.session_state.initialized = True
+    st.rerun()
 
-subject = st.selectbox("เลือกวิชา", ["Math","Reading","Writing"])
 
-# รีเซ็ตเมื่อเปลี่ยนวิชา
-if subject != st.session_state.subject:
-    st.session_state.subject = subject
-    st.session_state.level = 2
-    st.session_state.score = 0
-    st.session_state.count = 0
-    st.session_state.correct_streak = 0
-    st.session_state.finished = False
-    st.session_state.used_questions = []
-    if "current_question" in st.session_state:
-        del st.session_state.current_question
+# ==============================
+# SHOW QUESTIONS
+# ==============================
+if st.session_state.questions and not st.session_state.finished:
 
-# =========================
-# Adaptive Test
-# =========================
-if not st.session_state.finished:
+    q_index = st.session_state.question_index
+    question = st.session_state.questions[q_index]
 
-    progress = st.session_state.count / 5
-    st.progress(progress)
+    st.subheader(f"ข้อที่ {q_index + 1}")
+    st.write(question["q"])
 
-    questions = [
-        q for q in question_bank[subject]
-        if q["level"] == st.session_state.level
-        and q["q"] not in st.session_state.used_questions
-    ]
+    selected = st.radio(
+        "เลือกคำตอบ:",
+        question["choices"],
+        key=f"q_{q_index}"
+    )
 
-    if questions:
-        if "current_question" not in st.session_state:
-            st.session_state.current_question = random.choice(questions)
+    if st.button("ส่งคำตอบ"):
 
-        q = st.session_state.current_question
+        if selected == question["answer"]:
+            st.session_state.score += 1
 
-        st.subheader(f"ข้อที่ {st.session_state.count+1}")
-        st.write(f"ระดับความยาก: {st.session_state.level}")
-        st.write(q["q"])
+        st.session_state.question_index += 1
 
-        choice = st.radio("เลือกคำตอบ", q["c"], key=f"radio_{st.session_state.count}")
+        if st.session_state.question_index >= len(st.session_state.questions):
+            st.session_state.finished = True
 
-        if st.button("ส่งคำตอบ"):
-
-            if choice == q["a"]:
-                st.success("ถูกต้อง!")
-                st.session_state.score += 15
-                st.session_state.correct_streak += 1
-
-                if st.session_state.correct_streak >= 2:
-                    st.session_state.level = min(3, st.session_state.level+1)
-                    st.session_state.score += 5
-                    st.session_state.correct_streak = 0
-            else:
-                st.error("ผิด!")
-                st.session_state.level = max(1, st.session_state.level-1)
-                st.session_state.correct_streak = 0
-
-            st.session_state.used_questions.append(q["q"])
-            st.session_state.count += 1
-
-            if st.session_state.count >= 5:
-                st.session_state.finished = True
-
-            del st.session_state.current_question
-            st.rerun()
-
-# =========================
-# Result Section
-# =========================
-else:
-    st.subheader("✅ ทำข้อสอบเสร็จแล้ว")
-    st.write("คะแนนที่ได้:", st.session_state.score)
-
-    predicted = model.predict([[st.session_state.score,
-                                st.session_state.score,
-                                st.session_state.score]])[0]
-
-    st.success(f"🎯 ระดับความเข้าใจ: {predicted}")
-
-    st.subheader("🤖 AI แนะนำบทเรียน")
-
-    if predicted == "ต่ำ":
-        st.info("ควรทบทวนพื้นฐาน และทำแบบฝึกหัดระดับง่าย")
-    elif predicted == "กลาง":
-        st.info("ควรฝึกโจทย์ประยุกต์ และจับเวลา")
-    else:
-        st.info("พร้อมทำข้อสอบเข้ามหาวิทยาลัย และโจทย์ยาก")
-
-    if st.button("เริ่มใหม่"):
-        for key in list(st.session_state.keys()):
-            del st.session_state[key]
         st.rerun()
+
+
+# ==============================
+# RESULT + AI CLASSIFICATION
+# ==============================
+if st.session_state.finished:
+
+    st.success(f"คุณได้คะแนนทั้งหมด {st.session_state.score} / 15")
+
+    predicted_level = model.predict([[st.session_state.score]])[0]
+
+    st.info(f"🤖 AI ประเมินระดับคุณเป็น: {predicted_level.upper()}")
+
+    if predicted_level == "easy":
+        st.write("แนะนำให้ทบทวนพื้นฐานเพิ่มเติม")
+    elif predicted_level == "medium":
+        st.write("คุณอยู่ระดับกลาง ฝึกต่ออีกนิดจะเก่งมาก!")
+    else:
+        st.write("ยอดเยี่ยม! คุณอยู่ระดับสูง 🎯")
