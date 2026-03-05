@@ -220,46 +220,76 @@ if st.button("ส่งคำตอบ"):
                     st.video(friendly[mm][1])
 
             # -------------------------
-            # สร้างกราฟ Radar (Spider) — ไฮไลต์ทุกจุดที่เป็น tie (ถ้ามี)
-            # -------------------------
-            categories = ["การบวก", "การลบ", "การคูณ", "การหาร"]
-            values = [add_score, sub_score, mul_score, div_score]
+# Improved: สร้างกราฟ Radar (Spider) — tie-aware, ปรับตำแหน่งป้ายไม่ให้ทับ
+# -------------------------
+import numpy as np
+import matplotlib.pyplot as plt
 
-            # ปิด loop ให้ครบวง (first point same as last)
-            values_loop = values + values[:1]
-            angles = np.linspace(0, 2 * np.pi, len(categories) + 1, endpoint=True)
+# ป้ายแสดงบนแกน (แสดงเป็นภาษาไทย)
+labels = ["การบวก", "การลบ", "การคูณ", "การหาร"]
+# ค่า (แน่ใจว่าเป็นตัวเลข)
+values = [float(add_score), float(sub_score), float(mul_score), float(div_score)]
 
-            fig, ax = plt.subplots(figsize=(6,6), subplot_kw=dict(polar=True))
+# จำนวนแกน
+N = len(labels)
 
-            # plot line และเติมพื้นที่ด้านใน
-            ax.plot(angles, values_loop, linewidth=2)
-            ax.fill(angles, values_loop, alpha=0.25)
+# มุมสำหรับแต่ละแกน (ไม่รวม endpoint) แล้วเติมจุดแรกตอนปิดวง
+angles = np.linspace(0, 2 * np.pi, N, endpoint=False).tolist()
+angles += angles[:1]
 
-            # กำหนดชื่อแกน (หมวด)
-            ax.set_thetagrids(angles[:-1] * 180/np.pi, categories)
+# เติมค่าซ้ำจุดแรกเพื่อปิดวง
+vals = values + values[:1]
 
-            # ขอบเขตแกน (0-100)
-            ax.set_ylim(0, 100)
+fig, ax = plt.subplots(figsize=(6,6), subplot_kw=dict(polar=True))
 
-            # เส้นตาราง
-            ax.yaxis.grid(True)
-            ax.xaxis.grid(True)
+# เริ่มที่มุมบน (90 deg) และหมุนตามเข็มนาฬิกา ให้ดูเป็น radar แบบทั่วไป
+ax.set_theta_offset(np.pi / 2)
+ax.set_theta_direction(-1)
 
-            # ไฮไลต์ทุกจุดที่เป็นคะแนนต่ำสุด (tie-aware)
-            min_indices = [i for i, v in enumerate(values) if v == min_score]
-            for mi in min_indices:
-                # marker บนกราฟ (ต้องใช้มุมที่ถูกต้อง)
-                ax.plot([angles[mi]], [values[mi]], marker='o', markersize=10)
-                # แสดงข้อความข้างจุด (เลื่อนออกจากจุดเล็กน้อย)
-                text_angle = angles[mi]
-                # เลือกตำแหน่งข้อความให้อ่านได้ (ขึ้นหรือลงขึ้นอยู่กับค่ารัศมี)
-                text_rad = values[mi] + 8 if values[mi] + 8 <= 100 else values[mi] - 10
-                ax.text(text_angle, text_rad, f"{categories[mi]}: {values[mi]}", 
-                        ha='center', va='center', fontsize=9, fontweight='bold')
+# เส้นกราฟและพื้นที่ด้านใน
+ax.plot(angles, vals, linewidth=2)
+ax.fill(angles, vals, alpha=0.25)
 
-            ax.set_title("กราฟ Radar: คะแนนทักษะ (0–100)", pad=20)
+# ตั้งชื่อแกน (theta labels)
+ax.set_thetagrids(np.degrees(angles[:-1]), labels)
 
-            st.pyplot(fig)
+# ขอบเขตรัศมี 0-100 และ tick ที่อ่านง่าย
+ax.set_ylim(0, 100)
+ax.set_rlabel_position(180 / N)  # ตำแหน่ง radial labels (ปรับถ้าต้องการ)
+ax.yaxis.set_ticks([20, 40, 60, 80, 100])
+ax.yaxis.set_ticklabels(['20','40','60','80','100'])
+
+# เส้นตารางให้เห็นชัด
+ax.xaxis.grid(True, linestyle='-', linewidth=0.5)
+ax.yaxis.grid(True, linestyle='-', linewidth=0.5)
+
+# ไฮไลต์ทุกจุดที่เป็นคะแนนต่ำสุด (tie-aware)
+min_score = min(values)
+min_indices = [i for i, v in enumerate(values) if v == min_score]
+
+for mi in min_indices:
+    ang = angles[mi]
+    val = values[mi]
+    # จุดแดง/ขอบดำ
+    ax.plot(ang, val, marker='o', markersize=10, markeredgecolor='k', markerfacecolor='red')
+    # ตำแหน่งข้อความเล็กน้อย (offset) เพื่อไม่ให้ทับจุด
+    # กำหนด alignment ตามตำแหน่งเชิงมุม (cos ใช้เช็คซ้าย/ขวา)
+    ha = 'center'
+    if np.cos(ang) < -0.2:
+        ha = 'right'
+    elif np.cos(ang) > 0.2:
+        ha = 'left'
+    # วางข้อความเป็น offset point (ยกขึ้นเล็กน้อย)
+    ax.annotate(f"{labels[mi]}: {values[mi]:.1f}", xy=(ang, val),
+                xytext=(0, 12), textcoords='offset points',
+                ha=ha, va='center', fontsize=9, fontweight='bold',
+                bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.6))
+
+# หัวข้อ
+ax.set_title("กราฟ Radar: คะแนนทักษะ (0–100)", pad=20)
+
+# แสดงใน Streamlit
+st.pyplot(fig)
 
 # =========================
 # ปุ่มเริ่มใหม่
