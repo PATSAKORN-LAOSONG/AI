@@ -1,178 +1,278 @@
+# app.py
 import streamlit as st
 import random
 import pandas as pd
 import numpy as np
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.cluster import KMeans
 import matplotlib.pyplot as plt
 
-st.set_page_config(page_title="AI Competitive Adaptive System", layout="centered")
-st.title("🏆 AI Competitive Adaptive Learning System")
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
 
-# =============================
-# SESSION INIT
-# =============================
-defaults = {
-    "level": "medium",
-    "score": 0,
-    "question_count": 0,
-    "correct_streak": 0,
-    "wrong_streak": 0,
-    "max_correct": 0,
-    "max_wrong": 0,
-    "level_history": [],
-    "finished": False,
+st.set_page_config(page_title="Math Skill AI", layout="centered")
+
+st.title("🧠 ระบบวิเคราะห์จุดอ่อนคณิตศาสตร์ด้วย AI + Radar Chart")
+
+# =========================
+# โหลด Dataset และ Train ML (มี fallback ถ้าไฟล์ไม่พบ)
+# =========================
+@st.cache_resource
+def train_model():
+    csv_path = "math_skill_dataset_200.csv"
+    try:
+        df = pd.read_csv(csv_path)
+        X = df[["addition", "subtraction", "multiplication", "division"]]
+        y = df["label"]
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.2, random_state=42
+        )
+        model = RandomForestClassifier(random_state=42)
+        model.fit(X_train, y_train)
+        return model, "trained_from_csv"
+    except Exception as e:
+        # ถ้าอ่านไฟล์ไม่สำเร็จ ให้สร้าง fallback model แบบง่าย ๆ
+        class FallbackModel:
+            def predict(self, X):
+                # X เป็น list of lists: [[add, sub, mul, div]]
+                out = []
+                for row in X:
+                    add, sub, mul, div = row
+                    scores = {"add": add, "sub": sub, "mul": mul, "div": div}
+                    min_score = min(scores.values())
+                    # ถ้าทุกทักษะ >= 90 => strong_all
+                    if all(v >= 90 for v in scores.values()):
+                        out.append("strong_all")
+                    else:
+                        # ถ้ามีหลายจุดที่เท่ากัน เลือก 1 ตัวโดยเรียงลำดับ add, sub, mul, div (deterministic)
+                        for k in ["add", "sub", "mul", "div"]:
+                            if scores[k] == min_score:
+                                out.append(f"weak_{k}")
+                                break
+                return out
+        return FallbackModel(), f"fallback_no_csv ({e})"
+
+model, model_source = train_model()
+
+# =========================
+# ฟังก์ชันสร้างโจทย์
+# =========================
+def generate_question(operation):
+    if operation == "add":
+        a, b = random.randint(1, 50), random.randint(1, 50)
+        correct = a + b
+        question = f"{a} + {b} = ?"
+
+    elif operation == "sub":
+        a, b = random.randint(1, 50), random.randint(1, 50)
+        if a < b:
+            a, b = b, a
+        correct = a - b
+        question = f"{a} - {b} = ?"
+
+    elif operation == "mul":
+        a, b = random.randint(1, 12), random.randint(1, 12)
+        correct = a * b
+        question = f"{a} × {b} = ?"
+
+    elif operation == "div":
+        b = random.randint(1, 12)
+        correct = random.randint(1, 12)
+        a = b * correct
+        question = f"{a} ÷ {b} = ?"
+
+    # สร้างตัวเลือกโดยหลีกเลี่ยงซ้ำกัน
+    choices = set()
+    choices.add(correct)
+    while len(choices) < 4:
+        delta = random.choice([1,2,3,4,5,6,7,8,9])
+        sign = random.choice([1, -1])
+        cand = correct + sign * delta
+        if cand >= 0:
+            choices.add(cand)
+    choices = list(choices)
+    random.shuffle(choices)
+
+    return question, correct, choices
+
+# =========================
+# เตรียมข้อสอบ 12 ข้อ (เก็บใน session state)
+# =========================
+if "questions" not in st.session_state:
+    st.session_state.questions = []
+    operations = ["add"]*3 + ["sub"]*3 + ["mul"]*3 + ["div"]*3
+    random.shuffle(operations)
+
+    for op in operations:
+        q, ans, choices = generate_question(op)
+        st.session_state.questions.append({
+            "operation": op,
+            "question": q,
+            "answer": ans,
+            "choices": choices
+        })
+
+# =========================
+# แสดงข้อสอบ
+# =========================
+scores = {"add":0, "sub":0, "mul":0, "div":0}
+
+st.subheader("📘 ทำแบบทดสอบ 12 ข้อ")
+st.caption("โปรดตอบทุกข้อ แล้วกดปุ่ม 'ส่งคำตอบ'")
+
+PLACEHOLDER = "-- เลือกคำตอบ --"
+
+if "user_answers" not in st.session_state or len(st.session_state.user_answers) != len(st.session_state.questions):
+    st.session_state.user_answers = [PLACEHOLDER] * len(st.session_state.questions)
+
+for i, q in enumerate(st.session_state.questions):
+    choices_with_placeholder = [PLACEHOLDER] + [str(c) for c in q["choices"]]
+    selected = st.radio(
+        f"ข้อ {i+1}: {q['question']}",
+        choices_with_placeholder,
+        key=f"q{i}"
+    )
+    st.session_state.user_answers[i] = selected
+
+# friendly names + video links map
+friendly = {
+    "add": ("การบวก", "https://www.youtube.com/watch?v=c5eS7nRsE_Q"),
+    "sub": ("การลบ", "https://www.youtube.com/watch?v=vT_VBLlvdn8"),
+    "mul": ("การคูณ", "https://www.youtube.com/watch?v=73obrcsERe8"),
+    "div": ("การหาร", "https://www.youtube.com/watch?v=9D1JW8rYqeA")
 }
 
-for k, v in defaults.items():
-    if k not in st.session_state:
-        st.session_state[k] = v
+# =========================
+# ตรวจคำตอบเมื่อกดปุ่ม
+# =========================
+if st.button("ส่งคำตอบ"):
+    if any(ans == PLACEHOLDER for ans in st.session_state.user_answers):
+        st.warning("กรุณาตอบให้ครบทุกข้อก่อนส่ง (ยังมีข้อที่ไม่ได้เลือกคำตอบ).")
+    else:
+        # คำนวณคะแนน
+        for i, q in enumerate(st.session_state.questions):
+            user_val = st.session_state.user_answers[i]
+            try:
+                user_val_num = int(user_val)
+            except:
+                user_val_num = None
+            if user_val_num == q["answer"]:
+                scores[q["operation"]] += 1
 
-levels = ["easy", "medium", "hard"]
+        # Normalize 0–100 (แต่ละหมวดมี 3 ข้อ)
+        add_score = round((scores["add"]/3)*100, 2)
+        sub_score = round((scores["sub"]/3)*100, 2)
+        mul_score = round((scores["mul"]/3)*100, 2)
+        div_score = round((scores["div"]/3)*100, 2)
 
-# =============================
-# QUESTION BANK
-# =============================
-question_bank = {
-    "easy": [
-        {"q": "2+3=?", "choices": ["4","5","6","7"], "answer": "5", "difficulty":1},
-        {"q": "4+4=?", "choices": ["6","7","8","9"], "answer": "8", "difficulty":1}
-    ],
-    "medium": [
-        {"q": "อนุพันธ์ x^2?", "choices": ["x","2x","x^2","2"], "answer": "2x", "difficulty":2}
-    ],
-    "hard": [
-        {"q": "อินทิกรัล x^2?", "choices": ["x^3/3","x^2","2x","3x"], "answer": "x^3/3", "difficulty":3}
-    ]
-}
+        st.subheader("📊 ผลคะแนน")
+        st.write(f"➕ การบวก: {add_score}")
+        st.write(f"➖ การลบ: {sub_score}")
+        st.write(f"✖ การคูณ: {mul_score}")
+        st.write(f"➗ การหาร: {div_score}")
 
-# =============================
-# ML MODEL (Classification)
-# =============================
-def train_classifier():
-    data = {
-        "score":[0,1,2,3,4,5],
-        "max_correct":[0,1,2,2,3,4],
-        "max_wrong":[3,2,2,1,1,0],
-        "level":["easy","easy","medium","medium","hard","hard"]
-    }
-    df = pd.DataFrame(data)
-    X = df[["score","max_correct","max_wrong"]]
-    y = df["level"]
-    model = RandomForestClassifier()
-    model.fit(X,y)
-    return model
-
-clf = train_classifier()
-
-# =============================
-# QUESTION FUNCTION
-# =============================
-def get_question():
-    return random.choice(question_bank[st.session_state.level])
-
-# =============================
-# QUIZ LOGIC
-# =============================
-if not st.session_state.finished:
-
-    q = get_question()
-    st.write(f"ข้อที่ {st.session_state.question_count+1} (ระดับ {st.session_state.level})")
-    st.write(q["q"])
-
-    ans = st.radio("เลือกคำตอบ", q["choices"])
-
-    if st.button("ส่งคำตอบ"):
-
-        st.session_state.level_history.append(st.session_state.level)
-
-        if ans == q["answer"]:
-            st.session_state.score += 1
-            st.session_state.correct_streak += 1
-            st.session_state.wrong_streak = 0
+        # ถ้าได้เต็มทุกหมวด
+        if add_score == 100 and sub_score == 100 and mul_score == 100 and div_score == 100:
+            st.success("🎉 คุณพร้อมเรียนบทต่อไปแล้ว!")
         else:
-            st.session_state.wrong_streak += 1
-            st.session_state.correct_streak = 0
+            # ส่งเข้า ML (หรือ fallback)
+            try:
+                prediction = model.predict([[add_score, sub_score, mul_score, div_score]])
+                result = prediction[0]
+            except Exception as e:
+                result = "strong_all"  # fallback safe
 
-        st.session_state.max_correct = max(
-            st.session_state.max_correct,
-            st.session_state.correct_streak
-        )
+            st.subheader("🤖 ผลการวิเคราะห์จาก AI (model prediction)")
+            st.info(f"โมเดล ({model_source}) ทำนายจุดที่ควรพัฒนา: {result}")
 
-        st.session_state.max_wrong = max(
-            st.session_state.max_wrong,
-            st.session_state.wrong_streak
-        )
+            # --- วิเคราะห์จากคะแนนจริง (tie-aware) ---
+            skill_scores = {
+                "add": add_score,
+                "sub": sub_score,
+                "mul": mul_score,
+                "div": div_score
+            }
 
-        # Adaptive Rule
-        if st.session_state.correct_streak == 2:
-            if st.session_state.level != "hard":
-                st.session_state.level = levels[levels.index(st.session_state.level)+1]
-            st.session_state.correct_streak = 0
+            min_score = min(skill_scores.values())
+            weakest = [k for k, v in skill_scores.items() if v == min_score]
 
-        if st.session_state.wrong_streak == 2:
-            if st.session_state.level != "easy":
-                st.session_state.level = levels[levels.index(st.session_state.level)-1]
-            st.session_state.wrong_streak = 0
+            st.subheader("🔎 วิเคราะห์จากคะแนนจริง (tie-aware)")
+            st.write(f"คะแนนต่ำสุดคือ {min_score} — หัวข้อที่คะแนนต่ำสุด (จุดอ่อน):")
 
-        st.session_state.question_count += 1
+            for w in weakest:
+                name, vid = friendly[w]
+                st.write(f"- {name} (คะแนน {skill_scores[w]} / 100)")
+                st.write(f"  → คำแนะนำ: ฝึก{ name } เพิ่มเติม")
+                st.video(vid)
 
-        if st.session_state.question_count >= 5:
-            st.session_state.finished = True
+            # ถ้าโมเดลแนะนำหมวดอื่น ให้แสดงเสริม
+            # แปลง label model เป็น key ถ้ามี
+            model_map = {
+                "weak_add": "add",
+                "weak_sub": "sub",
+                "weak_mul": "mul",
+                "weak_div": "div"
+            }
+            if result not in [f"weak_{w}" for w in weakest] and result != "strong_all":
+                st.write("")  # spacer
+                st.write("หมายเหตุ: โมเดลยังชี้ไปที่:", result)
+                if result in model_map:
+                    mm = model_map[result]
+                    st.write(f"โมเดลแนะนำให้ฝึก {friendly[mm][0]} ด้วย (เสริม)")
+                    st.video(friendly[mm][1])
 
-        st.rerun()
+            # -------------------------
+            # สร้างกราฟ Radar (Spider) — ไฮไลต์ทุกจุดที่เป็น tie (ถ้ามี)
+            # -------------------------
+            categories = ["การบวก", "การลบ", "การคูณ", "การหาร"]
+            values = [add_score, sub_score, mul_score, div_score]
 
-# =============================
-# RESULT SECTION
-# =============================
-if st.session_state.finished:
+            # ปิด loop ให้ครบวง (first point same as last)
+            values_loop = values + values[:1]
+            angles = np.linspace(0, 2 * np.pi, len(categories) + 1, endpoint=True)
 
-    st.success(f"คะแนนรวม: {st.session_state.score}/5")
+            fig, ax = plt.subplots(figsize=(6,6), subplot_kw=dict(polar=True))
 
-    features = [[
-        st.session_state.score,
-        st.session_state.max_correct,
-        st.session_state.max_wrong
-    ]]
+            # plot line และเติมพื้นที่ด้านใน
+            ax.plot(angles, values_loop, linewidth=2)
+            ax.fill(angles, values_loop, alpha=0.25)
 
-    predicted = clf.predict(features)[0]
-    st.info(f"🤖 Classification Result: {predicted}")
+            # กำหนดชื่อแกน (หมวด)
+            ax.set_thetagrids(angles[:-1] * 180/np.pi, categories)
 
-    # =============================
-    # CLUSTERING
-    # =============================
-    student_data = np.array([
-        [st.session_state.score,
-         st.session_state.max_correct,
-         st.session_state.max_wrong]
-    ])
+            # ขอบเขตแกน (0-100)
+            ax.set_ylim(0, 100)
 
-    kmeans = KMeans(n_clusters=3, random_state=42)
-    dummy_data = np.array([
-        [0,0,3],
-        [2,1,2],
-        [5,3,0]
-    ])
-    kmeans.fit(dummy_data)
+            # เส้นตาราง
+            ax.yaxis.grid(True)
+            ax.xaxis.grid(True)
 
-    cluster = kmeans.predict(student_data)[0]
-    st.write(f"📊 Clustering Group: {cluster}")
+            # ไฮไลต์ทุกจุดที่เป็นคะแนนต่ำสุด (tie-aware)
+            min_indices = [i for i, v in enumerate(values) if v == min_score]
+            for mi in min_indices:
+                # marker บนกราฟ (ต้องใช้มุมที่ถูกต้อง)
+                ax.plot([angles[mi]], [values[mi]], marker='o', markersize=10)
+                # แสดงข้อความข้างจุด (เลื่อนออกจากจุดเล็กน้อย)
+                text_angle = angles[mi]
+                # เลือกตำแหน่งข้อความให้อ่านได้ (ขึ้นหรือลงขึ้นอยู่กับค่ารัศมี)
+                text_rad = values[mi] + 8 if values[mi] + 8 <= 100 else values[mi] - 10
+                ax.text(text_angle, text_rad, f"{categories[mi]}: {values[mi]}", 
+                        ha='center', va='center', fontsize=9, fontweight='bold')
 
-    # =============================
-    # GRAPH LEVEL CHANGE
-    # =============================
-    st.write("📈 ระดับที่เปลี่ยนระหว่างทำข้อสอบ")
+            ax.set_title("กราฟ Radar: คะแนนทักษะ (0–100)", pad=20)
 
-    level_map = {"easy":1,"medium":2,"hard":3}
-    numeric_levels = [level_map[l] for l in st.session_state.level_history]
+            st.pyplot(fig)
 
-    plt.plot(numeric_levels)
-    plt.ylim(1,3)
-    plt.ylabel("Level")
-    plt.xlabel("Question")
-    st.pyplot(plt)
-
-    if st.button("เริ่มใหม่"):
-        for k in defaults.keys():
-            st.session_state[k] = defaults[k]
-        st.rerun()
+# =========================
+# ปุ่มเริ่มใหม่
+# =========================
+if st.button("🔄 เริ่มใหม่"):
+    keys_to_clear = ["questions", "user_answers"]
+    for k in keys_to_clear:
+        if k in st.session_state:
+            del st.session_state[k]
+    try:
+        st.experimental_rerun()
+    except Exception:
+        try:
+            st.script_request_rerun()
+        except Exception:
+            st.stop()
